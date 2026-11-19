@@ -14,8 +14,7 @@ WORKDIR /app
 
 ENV PYTHONUNBUFFERED=1 \
     PYTHONDONTWRITEBYTECODE=1 \
-    DATA_DIR=/app/data \
-    PORT=8000
+    DATA_DIR=/app/data
 
 # Install system dependencies
 RUN apt-get update && apt-get install -y --no-install-recommends \
@@ -34,9 +33,9 @@ RUN mkdir -p /app/data/contracts/pdf /app/data/master_data /app/data/pr_batches
 COPY backend/ /app/backend/
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
-# Expose port
-EXPOSE 8000
+# Expose port (Render uses $PORT env var, default 10000)
+EXPOSE 10000
 
-# Start command
-CMD ["uvicorn", "backend.app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+# Start command — binds to $PORT so Render's port scanner finds it immediately
+CMD ["sh", "-c", "uvicorn backend.app.main:app --host 0.0.0.0 --port ${PORT:-10000}"]
 
