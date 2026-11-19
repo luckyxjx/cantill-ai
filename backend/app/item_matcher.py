@@ -40,7 +40,7 @@ def clean_text(text: str) -> str:
     for noise in NOISE_WORDS:
         text = re.sub(noise, '', text, flags=re.IGNORECASE)
     for k, v in ALIAS_MAP.items():
-        text = text.replace(k, v)
+        text = re.sub(rf'\b{re.escape(k)}\b', v, text, flags=re.IGNORECASE)
     text = re.sub(r'[^a-z0-9\s/.-]', ' ', text)
     return ' '.join(text.split())
 
@@ -68,7 +68,7 @@ class ItemMatcher:
     def get_by_code(self, item_code: str) -> Optional[Dict[str, Any]]:
         return self.item_map.get(str(item_code).strip())
 
-    def match(self, description: str, threshold: float = 0.55) -> Tuple[str, Optional[Dict[str, Any]], float]:
+    def match(self, description: str, threshold: float = 0.65) -> Tuple[str, Optional[Dict[str, Any]], float]:
         """
         Returns (resolved_code, matched_item_info, confidence)
         If no match above threshold, returns ("NEW", None, confidence)
@@ -95,9 +95,10 @@ class ItemMatcher:
             
             # 3. Fuzzy similarity
             if HAS_RAPIDFUZZ:
-                token_set_ratio = fuzz.token_set_ratio(c_query, c_target) / 100.0
+                token_sort = fuzz.token_sort_ratio(c_query, c_target) / 100.0
+                token_set = fuzz.token_set_ratio(c_query, c_target) / 100.0
                 ratio = fuzz.ratio(c_query, c_target) / 100.0
-                fuzzy_score = max(token_set_ratio, ratio)
+                fuzzy_score = max(token_sort, 0.5 * token_set + 0.5 * token_sort, ratio)
             else:
                 fuzzy_score = SequenceMatcher(None, c_query, c_target).ratio()
 

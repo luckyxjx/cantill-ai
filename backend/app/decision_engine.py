@@ -71,6 +71,37 @@ class DecisionEngine:
                 ignore_index=True
             )
 
+        # Also load dynamically ingested contracts from SQLite contracts_extracted
+        try:
+            import json
+            from .db import get_db_connection
+            conn = get_db_connection()
+            cursor = conn.cursor()
+            cursor.execute("SELECT contract_id, supplier_id, supplier_name, start_date, end_date, value_cap, consumed_value, lines_json FROM contracts_extracted")
+            db_rows = cursor.fetchall()
+            conn.close()
+            db_contracts = []
+            db_lines = []
+            for r in db_rows:
+                if r['contract_id'] not in self.contract_register_df['contract_id'].values:
+                    db_contracts.append({
+                        'contract_id': r['contract_id'],
+                        'supplier_id': r['supplier_id'],
+                        'supplier_name': r['supplier_name'],
+                        'start_date': r['start_date'],
+                        'end_date': r['end_date'],
+                        'value_cap': float(r['value_cap']),
+                        'consumed_value': float(r['consumed_value'])
+                    })
+                    for l in json.loads(r['lines_json']):
+                        db_lines.append(l)
+            if db_contracts:
+                self.contract_register_df = pd.concat([self.contract_register_df, pd.DataFrame(db_contracts)], ignore_index=True)
+            if db_lines:
+                self.contract_lines_df = pd.concat([self.contract_lines_df, pd.DataFrame(db_lines)], ignore_index=True)
+        except Exception:
+            pass
+
         self.contract_consumed = {
             row['contract_id']: float(row['consumed_value'])
             for _, row in self.contract_register_df.iterrows()
@@ -226,24 +257,38 @@ class DecisionEngine:
         parsed_lines = []
         for line in pr_lines:
             line_dict = line.model_dump() if hasattr(line, "model_dump") else dict(line)
+            
+            # Normalize plant
+            line_dict['plant'] = str(line_dict.get('plant', '')).strip().upper()
+            
+            # Robust item code resolution
             code = line_dict.get('item_code')
             if code and str(code).strip():
-                resolved_code = str(code).strip()
+                candidate_code = str(code).strip().upper()
+                if candidate_code in self.item_map:
+                    resolved_code = candidate_code
+                else:
+                    # Item code not in catalog, fallback to fuzzy description match
+                    f_code, _, _ = self.item_matcher.match(line_dict.get('description', ''))
+                    resolved_code = f_code
             else:
                 resolved_code, _, _ = self.item_matcher.match(line_dict.get('description', ''))
             
             line_dict['resolved_item_code'] = resolved_code
-            line_dict['created_dt'] = pd.to_datetime(line_dict['created_at'])
-            line_dict['need_by_dt'] = pd.to_datetime(line_dict['need_by_date'])
+            
+            # Robust date parsing
+            line_dict['created_dt'] = pd.to_datetime(str(line_dict.get('created_at', '')).strip(), errors='coerce')
+            line_dict['need_by_dt'] = pd.to_datetime(str(line_dict.get('need_by_date', '')).strip(), errors='coerce')
             parsed_lines.append(line_dict)
 
-        # Detect edge cases & unprocessable lines (zero qty, invalid plant, suspicious duplicate submissions)
+        # Detect edge cases & unprocessable lines (zero qty, invalid dates, invalid plant, suspicious duplicate submissions)
         suspicious_duplicates = set()
         for i in range(len(parsed_lines)):
             for j in range(i + 1, len(parsed_lines)):
                 l1 = parsed_lines[i]
                 l2 = parsed_lines[j]
-                if (l1['requester'] == l2['requester'] and
+                if (pd.notna(l1['created_dt']) and pd.notna(l2['created_dt']) and
+                    l1['requester'] == l2['requester'] and
                     l1['plant'] == l2['plant'] and
                     l1['resolved_item_code'] == l2['resolved_item_code'] and
                     l1['need_by_date'] == l2['need_by_date'] and
@@ -257,7 +302,23 @@ class DecisionEngine:
 
         for line in parsed_lines:
             key = (line['pr_no'], line['pr_line'])
-            if line['quantity'] <= 0:
+            if pd.isna(line['created_dt']) or pd.isna(line['need_by_dt']):
+                unprocessed_outputs.append(PRDecisionOutput(
+                    pr_no=line['pr_no'],
+                    pr_line=line['pr_line'],
+                    resolved_item_code=line['resolved_item_code'],
+                    group_id="REQ-DISCARDED",
+                    po_id="",
+                    decision="SOURCING_REQUEST",
+                    route="NOT_PROCESSED",
+                    supplier_id="",
+                    unit_price=None,
+                    group_value_inr=0.0,
+                    suggested_supplier_ids="",
+                    policy_version=policy.get("version", "v5.0"),
+                    reason="Invalid date format: created_at or need_by_date could not be parsed"
+                ))
+            elif line['quantity'] <= 0:
                 unprocessed_outputs.append(PRDecisionOutput(
                     pr_no=line['pr_no'],
                     pr_line=line['pr_line'],

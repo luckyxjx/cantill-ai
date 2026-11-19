@@ -159,6 +159,22 @@ def evaluate_condition(condition: Dict[str, Any], context: Dict[str, Any]) -> bo
 
     return False
 
+def parse_amount(text_val: str) -> Optional[float]:
+    """Parses Indian currency/amount notations (e.g., 3 Lakhs, 3L, 3,00,000, 1.5 Cr, 300000)."""
+    if not text_val:
+        return None
+    s = text_val.strip().lower()
+    cr_match = re.search(r'([\d.]+)\s*(?:cr|crore|crores)', s)
+    if cr_match:
+        return float(cr_match.group(1)) * 10000000.0
+    lakh_match = re.search(r'([\d.]+)\s*(?:lakh|lakhs|l)\b', s)
+    if lakh_match:
+        return float(lakh_match.group(1)) * 100000.0
+    num_match = re.search(r'[\d,]+(?:\.\d+)?', s)
+    if num_match:
+        return float(num_match.group(0).replace(',', ''))
+    return None
+
 class PolicyManager:
     @staticmethod
     def ensure_default_policy():
@@ -301,90 +317,129 @@ class PolicyManager:
 
         diffs.append(f"Policy version updated to {new_ver} (Effective: {proposed['effective_date']})")
 
-        # 1. Spot PO limit change: e.g. "spot po limit increased to 3,00,000" or "threshold ₹3,00,000"
-        spot_match = re.search(r'(?:spot(?:\s*po)?|clause\s*5\.4).*?(?:limit|threshold|below|raised to|increased to|to)\s*(?:inr|rs\.?|₹)?\s*([\d,]+)', text, re.IGNORECASE)
+        # 1. Spot PO limit change: e.g. "spot po limit increased to 3,00,000", "threshold ₹3,00,000", "3 Lakhs", "3L"
+        spot_match = re.search(r'(?:spot(?:\s*po)?|clause\s*5\.4).*?(?:limit|threshold|below|under|raised to|increased to|revised to|to)\s*(?:inr|rs\.?|₹)?\s*([\d,.]+(?:\s*(?:lakhs?|l|cr|crores?))?)', text, re.IGNORECASE)
         if spot_match:
-            new_val = float(spot_match.group(1).replace(",", ""))
-            old_val = proposed["parameters"].get("spot_po_limit", 200000.0)
-            proposed["parameters"]["spot_po_limit"] = new_val
-            # update Rule 5.4 in rules list
-            for r in proposed["rules"]:
-                if r["id"] == "5.4" or r["route"] == "SPOT_PO":
-                    for cond in r["condition"].get("and", []):
-                        if cond.get("field") == "value":
-                            cond["value"] = new_val
-                    r["reason_template"] = f"Rule 5.4: Value under ₹{int(new_val):,} with active purchase history"
-            diffs.append(f"Rule 5.4 (Spot PO Limit): Changed threshold from ₹{int(old_val):,} to ₹{int(new_val):,}")
+            new_val = parse_amount(spot_match.group(1))
+            if new_val:
+                old_val = proposed["parameters"].get("spot_po_limit", 200000.0)
+                proposed["parameters"]["spot_po_limit"] = new_val
+                # update Rule 5.4 in rules list
+                for r in proposed["rules"]:
+                    if r["id"] == "5.4" or r["route"] == "SPOT_PO":
+                        for cond in r["condition"].get("and", []):
+                            if cond.get("field") == "value":
+                                cond["value"] = new_val
+                        r["reason_template"] = f"Rule 5.4: Value under ₹{int(new_val):,} with active purchase history"
+                diffs.append(f"Rule 5.4 (Spot PO Limit): Changed threshold from ₹{int(old_val):,} to ₹{int(new_val):,}")
 
-        # 2. Emergency PO limit change: e.g. "emergency limit to ₹7,50,000"
-        emerg_match = re.search(r'(?:emergency(?:\s*po)?|clause\s*5\.3).*?(?:limit|threshold|below|raised to|increased to|to)\s*(?:inr|rs\.?|₹)?\s*([\d,]+)', text, re.IGNORECASE)
+        # 2. Emergency PO limit change: e.g. "emergency limit to ₹7,50,000", "7.5 Lakhs"
+        emerg_match = re.search(r'(?:emergency(?:\s*po)?|clause\s*5\.3).*?(?:limit|threshold|below|under|raised to|increased to|revised to|to)\s*(?:inr|rs\.?|₹)?\s*([\d,.]+(?:\s*(?:lakhs?|l|cr|crores?))?)', text, re.IGNORECASE)
         if emerg_match:
-            new_val = float(emerg_match.group(1).replace(",", ""))
-            old_val = proposed["parameters"].get("emergency_po_limit", 500000.0)
-            proposed["parameters"]["emergency_po_limit"] = new_val
-            for r in proposed["rules"]:
-                if r["id"] == "5.3" or r["route"] == "EMERGENCY_PO":
-                    for cond in r["condition"].get("and", []):
-                        if cond.get("field") == "value":
-                            cond["value"] = new_val
-                    r["reason_template"] = f"Rule 5.3: Emergency under ₹{int(new_val):,} with active purchase history"
-            diffs.append(f"Rule 5.3 (Emergency PO Limit): Changed threshold from ₹{int(old_val):,} to ₹{int(new_val):,}")
+            new_val = parse_amount(emerg_match.group(1))
+            if new_val:
+                old_val = proposed["parameters"].get("emergency_po_limit", 500000.0)
+                proposed["parameters"]["emergency_po_limit"] = new_val
+                for r in proposed["rules"]:
+                    if r["id"] == "5.3" or r["route"] == "EMERGENCY_PO":
+                        for cond in r["condition"].get("and", []):
+                            if cond.get("field") == "value":
+                                cond["value"] = new_val
+                        r["reason_template"] = f"Rule 5.3: Emergency under ₹{int(new_val):,} with active purchase history"
+                diffs.append(f"Rule 5.3 (Emergency PO Limit): Changed threshold from ₹{int(old_val):,} to ₹{int(new_val):,}")
 
-        # 3. RFQ / RFP threshold: e.g. "rfq limit 15,00,000" or "rfp threshold ₹15,00,000"
-        rfq_match = re.search(r'(?:rfq|rfp|clause\s*5\.5|clause\s*5\.6).*?(?:limit|threshold|above|raised to|increased to|to)\s*(?:inr|rs\.?|₹)?\s*([\d,]+)', text, re.IGNORECASE)
+        # 3. RFQ / RFP threshold: e.g. "rfq limit 15,00,000" or "rfp threshold ₹15,00,000", "15 Lakhs"
+        rfq_match = re.search(r'(?:rfq|rfp|clause\s*5\.5|clause\s*5\.6).*?(?:limit|threshold|above|raised to|increased to|revised to|to)\s*(?:inr|rs\.?|₹)?\s*([\d,.]+(?:\s*(?:lakhs?|l|cr|crores?))?)', text, re.IGNORECASE)
         if rfq_match:
-            new_val = float(rfq_match.group(1).replace(",", ""))
-            old_val = proposed["parameters"].get("rfq_limit", 1000000.0)
-            proposed["parameters"]["rfq_limit"] = new_val
+            new_val = parse_amount(rfq_match.group(1))
+            if new_val:
+                old_val = proposed["parameters"].get("rfq_limit", 1000000.0)
+                proposed["parameters"]["rfq_limit"] = new_val
+                for r in proposed["rules"]:
+                    if r["id"] == "5.5" or r["route"] == "RFQ":
+                        r["condition"]["value"] = new_val
+                        r["reason_template"] = f"Rule 5.5: Value under ₹{int(new_val):,} requires RFQ quotes"
+                    elif r["id"] == "5.6" or r["route"] == "RFP":
+                        r["condition"]["value"] = new_val
+                        r["reason_template"] = f"Rule 5.6: Value ₹{int(new_val):,} or more requires formal RFP"
+                diffs.append(f"Rules 5.5 & 5.6 (RFQ/RFP Boundary): Changed threshold from ₹{int(old_val):,} to ₹{int(new_val):,}")
+
+        # 4. Sourcing quote counts: e.g. "RFQ suggestions changed to 4 suppliers"
+        rfq_quote_match = re.search(r'rfq.*?(?:suggest|quotes?|suppliers?).*?(\d+)', text, re.IGNORECASE)
+        if rfq_quote_match:
+            new_count = int(rfq_quote_match.group(1))
             for r in proposed["rules"]:
                 if r["id"] == "5.5" or r["route"] == "RFQ":
-                    r["condition"]["value"] = new_val
-                    r["reason_template"] = f"Rule 5.5: Value under ₹{int(new_val):,} requires RFQ quotes"
-                elif r["id"] == "5.6" or r["route"] == "RFP":
-                    r["condition"]["value"] = new_val
-                    r["reason_template"] = f"Rule 5.6: Value ₹{int(new_val):,} or more requires formal RFP"
-            diffs.append(f"Rules 5.5 & 5.6 (RFQ/RFP Boundary): Changed threshold from ₹{int(old_val):,} to ₹{int(new_val):,}")
+                    old_c = r.get("suggest_count", 3)
+                    r["suggest_count"] = new_count
+                    diffs.append(f"RFQ Supplier Suggestions: Changed from {old_c} to {new_count} suppliers")
 
-        # 4. Plant-specific rule addition: e.g., "For CHK1 plant, items under 50,000 go to direct spot PO"
-        plant_match = re.search(r'for\s+(CHK1|PUN1)\s+plant.*?(?:under|below)\s*(?:inr|rs\.?|₹)?\s*([\d,]+)', text, re.IGNORECASE)
+        rfp_quote_match = re.search(r'rfp.*?(?:suggest|quotes?|suppliers?).*?(\d+)', text, re.IGNORECASE)
+        if rfp_quote_match:
+            new_count = int(rfp_quote_match.group(1))
+            for r in proposed["rules"]:
+                if r["id"] == "5.6" or r["route"] == "RFP":
+                    old_c = r.get("suggest_count", 5)
+                    r["suggest_count"] = new_count
+                    diffs.append(f"RFP Supplier Suggestions: Changed from {old_c} to {new_count} suppliers")
+
+        # 5. Plant-specific rule addition: e.g., "For CHK1 plant, items under 50,000 go to direct spot PO"
+        plant_match = re.search(r'for\s+(CHK1|PUN1)\s+plant.*?(?:under|below)\s*(?:inr|rs\.?|₹)?\s*([\d,.]+(?:\s*(?:lakhs?|l))?)', text, re.IGNORECASE)
         if plant_match:
             target_plant = plant_match.group(1).upper()
-            plant_limit = float(plant_match.group(2).replace(",", ""))
-            rule_id = f"5.4_{target_plant.lower()}"
-            new_rule = {
-                "id": rule_id,
-                "name": f"Plant {target_plant} Direct PO",
-                "condition": {
-                    "and": [
-                        {"field": "plant", "op": "==", "value": target_plant},
-                        {"field": "value", "op": "<", "value": plant_limit}
-                    ]
-                },
-                "route": "SPOT_PO",
-                "decision": "PO",
-                "suggest_count": 0,
-                "supplier_selection": "1st_preferred",
-                "price_selection": "reference_price",
-                "require_approval": False,
-                "reason_template": f"Rule {rule_id}: Plant {target_plant} direct PO under ₹{int(plant_limit):,}"
-            }
-            # Insert before general spot PO
-            inserted = False
-            for idx, r in enumerate(proposed["rules"]):
-                if r["id"] == "5.4":
-                    proposed["rules"].insert(idx, new_rule)
-                    inserted = True
-                    break
-            if not inserted:
-                proposed["rules"].append(new_rule)
-            diffs.append(f"Added Plant-Specific Rule {rule_id}: For {target_plant}, requirements under ₹{int(plant_limit):,} route to SPOT_PO directly.")
+            plant_limit = parse_amount(plant_match.group(2))
+            if plant_limit:
+                rule_id = f"5.4_{target_plant.lower()}"
+                new_rule = {
+                    "id": rule_id,
+                    "name": f"Plant {target_plant} Direct PO",
+                    "condition": {
+                        "and": [
+                            {"field": "plant", "op": "==", "value": target_plant},
+                            {"field": "value", "op": "<", "value": plant_limit}
+                        ]
+                    },
+                    "route": "SPOT_PO",
+                    "decision": "PO",
+                    "suggest_count": 0,
+                    "supplier_selection": "1st_preferred",
+                    "price_selection": "reference_price",
+                    "require_approval": False,
+                    "reason_template": f"Rule {rule_id}: Plant {target_plant} direct PO under ₹{int(plant_limit):,}"
+                }
+                # Insert before general spot PO
+                inserted = False
+                for idx, r in enumerate(proposed["rules"]):
+                    if r["id"] == "5.4":
+                        proposed["rules"].insert(idx, new_rule)
+                        inserted = True
+                        break
+                if not inserted:
+                    proposed["rules"].append(new_rule)
+                diffs.append(f"Added Plant-Specific Rule {rule_id}: For {target_plant}, requirements under ₹{int(plant_limit):,} route to SPOT_PO directly.")
 
-        # 5. Anti-splitting or need-by days:
+        # 6. Anti-splitting or need-by days:
         split_match = re.search(r'anti[- ]splitting.*?(\d+)\s*days', text, re.IGNORECASE)
         if split_match:
             days = int(split_match.group(1))
             old_days = proposed["parameters"].get("anti_splitting_window_days", 14)
             proposed["parameters"]["anti_splitting_window_days"] = days
             diffs.append(f"Anti-Splitting Window: Changed from {old_days} days to {days} days")
+
+        nb_match = re.search(r'need[- ]by.*?(\d+)\s*days', text, re.IGNORECASE)
+        if nb_match:
+            days = int(nb_match.group(1))
+            old_days = proposed["parameters"].get("need_by_window_days", 7)
+            proposed["parameters"]["need_by_window_days"] = days
+            diffs.append(f"Need-By Window: Changed from {old_days} days to {days} days")
+
+        po_match = re.search(r'po\s*consolidation.*?(\d+)\s*(?:hours|hrs)', text, re.IGNORECASE)
+        if po_match:
+            hrs = int(po_match.group(1))
+            old_hrs = proposed["parameters"].get("po_consolidation_window_hours", 24)
+            proposed["parameters"]["po_consolidation_window_hours"] = hrs
+            diffs.append(f"PO Consolidation Window: Changed from {old_hrs} hours to {hrs} hours")
+
+        return proposed, diffs
 
         return proposed, diffs

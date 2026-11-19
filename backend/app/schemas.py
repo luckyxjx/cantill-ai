@@ -1,3 +1,4 @@
+import re
 from typing import List, Optional, Dict, Any, Union
 from pydantic import BaseModel, Field, field_validator
 import math
@@ -18,13 +19,31 @@ class PRLineInput(BaseModel):
     need_by_date: str
     urgency: str = "Normal"
 
+    @field_validator("plant", mode="before")
+    @classmethod
+    def clean_plant(cls, v):
+        return str(v).strip().upper() if v is not None else ""
+
+    @field_validator("quantity", mode="before")
+    @classmethod
+    def clean_quantity(cls, v):
+        if v is None:
+            return 0
+        if isinstance(v, (int, float)):
+            return int(round(v))
+        s = str(v).replace(",", "").strip()
+        try:
+            return int(round(float(s)))
+        except (ValueError, TypeError):
+            return 0
+
     @field_validator("item_code", mode="before")
     @classmethod
     def clean_item_code(cls, v):
         if v is None or (isinstance(v, float) and math.isnan(v)):
             return None
         s = str(v).strip()
-        return s if s and s.lower() != "nan" else None
+        return s.upper() if s and s.lower() != "nan" else None
 
     @field_validator("estimated_unit_price", mode="before")
     @classmethod
@@ -32,10 +51,13 @@ class PRLineInput(BaseModel):
         if v is None or (isinstance(v, float) and math.isnan(v)):
             return None
         if isinstance(v, str):
-            v_str = v.strip()
+            v_str = re.sub(r'[₹$Rs,]', '', v).strip()
             if not v_str or v_str.lower() == "nan":
                 return None
-            return float(v_str)
+            try:
+                return float(v_str)
+            except (ValueError, TypeError):
+                return None
         return float(v)
 
 
