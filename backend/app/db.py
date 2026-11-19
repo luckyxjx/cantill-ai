@@ -82,6 +82,101 @@ def init_db():
     );
     """)
 
+    # 6. Master data tables (seeded from seed_data.py — no CSV files needed at runtime)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS item_master (
+        item_code TEXT PRIMARY KEY,
+        description TEXT,
+        uom TEXT,
+        category TEXT,
+        item_type TEXT,
+        standard_price REAL
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS plants (
+        plant TEXT PRIMARY KEY,
+        name TEXT
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS supplier_master (
+        supplier_id TEXT PRIMARY KEY,
+        name TEXT,
+        city TEXT,
+        categories TEXT,
+        status TEXT,
+        on_time_pct REAL,
+        quality_rating REAL
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS po_history (
+        po_number TEXT,
+        po_date TEXT,
+        supplier_id TEXT,
+        item_code TEXT,
+        quantity REAL,
+        uom TEXT,
+        unit_price REAL,
+        plant TEXT,
+        delivered_on_time INTEGER
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS contract_lines (
+        contract_id TEXT,
+        item_code TEXT,
+        description TEXT,
+        uom TEXT,
+        rate REAL
+    );
+    """)
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS contract_register (
+        contract_id TEXT PRIMARY KEY,
+        supplier_id TEXT,
+        supplier_name TEXT,
+        start_date TEXT,
+        end_date TEXT,
+        value_cap REAL,
+        consumed_value REAL
+    );
+    """)
+
+    # Seed master data if tables are empty
+    if cursor.execute("SELECT COUNT(*) FROM item_master").fetchone()[0] == 0:
+        from .seed_data import ITEM_MASTER, PLANTS, SUPPLIER_MASTER, PO_HISTORY, CONTRACT_LINES, CONTRACT_REGISTER
+        cursor.executemany(
+            "INSERT OR IGNORE INTO item_master VALUES (?,?,?,?,?,?)",
+            [(r['item_code'], r['description'], r['uom'], r['category'], r['item_type'], float(r['standard_price'] or 0)) for r in ITEM_MASTER]
+        )
+        cursor.executemany(
+            "INSERT OR IGNORE INTO plants VALUES (?,?)",
+            [(r['plant'], r['name']) for r in PLANTS]
+        )
+        cursor.executemany(
+            "INSERT OR IGNORE INTO supplier_master VALUES (?,?,?,?,?,?,?)",
+            [(r['supplier_id'], r['name'], r['city'], r['categories'], r['status'],
+              float(r['on_time_pct'] or 0), float(r['quality_rating'] or 0)) for r in SUPPLIER_MASTER]
+        )
+        cursor.executemany(
+            "INSERT INTO po_history VALUES (?,?,?,?,?,?,?,?,?)",
+            [(r['po_number'], r['po_date'], r['supplier_id'], r['item_code'],
+              float(r['quantity'] or 0), r['uom'], float(r['unit_price'] or 0),
+              r['plant'], 1 if str(r['delivered_on_time']).strip().upper() in ('1','TRUE','YES') else 0) for r in PO_HISTORY]
+        )
+        cursor.executemany(
+            "INSERT INTO contract_lines VALUES (?,?,?,?,?)",
+            [(r['contract_id'], r['item_code'], r['description'], r['uom'], float(r['rate'] or 0)) for r in CONTRACT_LINES]
+        )
+        cursor.executemany(
+            "INSERT OR IGNORE INTO contract_register VALUES (?,?,?,?,?,?,?)",
+            [(r['contract_id'], r['supplier_id'], r['supplier_name'], r['start_date'], r['end_date'],
+              float(r['value_cap'] or 0), float(r['consumed_value'] or 0)) for r in CONTRACT_REGISTER]
+        )
+        print(f"[DB] Seeded master data: {len(ITEM_MASTER)} items, {len(SUPPLIER_MASTER)} suppliers, {len(PO_HISTORY)} PO records")
+
     conn.commit()
     conn.close()
 

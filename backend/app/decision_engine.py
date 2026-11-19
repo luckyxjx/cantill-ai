@@ -13,32 +13,51 @@ from .item_matcher import ItemMatcher
 from .pdf_parser import parse_contract_pdf
 from .policy_engine import PolicyManager, evaluate_condition
 from .schemas import PRLineInput, PRDecisionOutput, PreferredSupplierRow
+from .db import get_db_connection
 
 class DecisionEngine:
     def __init__(self, policy: Optional[Dict[str, Any]] = None):
-        self.item_matcher = ItemMatcher(ITEM_MASTER_CSV)
         self.load_master_data()
         self.load_contracts()
         self.policy = policy or PolicyManager.get_active_policy()
 
-    def load_master_data(self):
-        self.plants_df = pd.read_csv(PLANTS_CSV)
-        self.valid_plants = set(self.plants_df['plant'].str.strip())
+    def _load_from_db_or_csv(self, table: str, csv_path: str) -> pd.DataFrame:
+        """Try SQLite first (always populated via seed_data), fall back to CSV."""
+        try:
+            conn = get_db_connection()
+            df = pd.read_sql_query(f"SELECT * FROM {table}", conn)
+            conn.close()
+            if not df.empty:
+                return df
+        except Exception:
+            pass
+        # Fallback: CSV on disk (local dev with data/ directory)
+        import os
+        if os.path.exists(csv_path):
+            return pd.read_csv(csv_path)
+        return pd.DataFrame()
 
-        self.items_df = pd.read_csv(ITEM_MASTER_CSV)
-        self.suppliers_df = pd.read_csv(SUPPLIER_MASTER_CSV)
-        self.po_history_df = pd.read_csv(PO_HISTORY_CSV)
-        self.po_history_df['po_dt'] = pd.to_datetime(self.po_history_df['po_date'])
+    def load_master_data(self):
+        self.plants_df = self._load_from_db_or_csv("plants", PLANTS_CSV)
+        self.valid_plants = set(self.plants_df['plant'].str.strip()) if not self.plants_df.empty else set()
+
+        self.items_df = self._load_from_db_or_csv("item_master", ITEM_MASTER_CSV)
+        self.suppliers_df = self._load_from_db_or_csv("supplier_master", SUPPLIER_MASTER_CSV)
+        self.po_history_df = self._load_from_db_or_csv("po_history", PO_HISTORY_CSV)
+        self.po_history_df['po_dt'] = pd.to_datetime(self.po_history_df['po_date'], errors='coerce')
 
         self.active_suppliers = set(
             self.suppliers_df[self.suppliers_df['status'] == 'Active']['supplier_id']
-        )
+        ) if not self.suppliers_df.empty else set()
         self.supplier_map = {row['supplier_id']: row for _, row in self.suppliers_df.iterrows()}
         self.item_map = {row['item_code']: row for _, row in self.items_df.iterrows()}
 
+        # Build ItemMatcher from DB data (no CSV file needed)
+        self.item_matcher = ItemMatcher(ITEM_MASTER_CSV, items_df=self.items_df if not self.items_df.empty else None)
+
     def load_contracts(self):
-        self.contract_register_df = pd.read_csv(CONTRACT_REGISTER_CSV)
-        self.contract_lines_df = pd.read_csv(CONTRACT_LINES_CSV)
+        self.contract_register_df = self._load_from_db_or_csv("contract_register", CONTRACT_REGISTER_CSV)
+        self.contract_lines_df = self._load_from_db_or_csv("contract_lines", CONTRACT_LINES_CSV)
 
         # Parse all PDF contracts in CONTRACTS_PDF_DIR
         pdf_contracts = []

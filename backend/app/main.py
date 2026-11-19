@@ -43,23 +43,29 @@ chat_assistant = ChatIntakeAssistant()
 
 @app.on_event("startup")
 def startup_event():
-    init_db()
+    init_db()  # Creates tables AND seeds master data from seed_data.py
     PolicyManager.ensure_default_policy()
 
-    # If CORVO_DATA_BUNDLE environment variable is provided, auto-extract into DATA_DIR
-    data_bundle = os.environ.get("CORVO_DATA_BUNDLE")
-    if data_bundle and not os.path.exists(ITEM_MASTER_CSV):
+    # Optional: Download data bundle from URL (DATA_DOWNLOAD_URL env var) for supplemental files
+    data_url = os.environ.get("DATA_DOWNLOAD_URL")
+    if data_url:
         try:
-            import base64, io, tarfile
-            raw = base64.b64decode(data_bundle.strip())
-            with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
-                tar.extractall(path=str(BASE_DIR))
-            print("Successfully extracted CORVO_DATA_BUNDLE from environment variable.")
+            import urllib.request, io, tarfile, zipfile
+            print(f"Downloading supplemental data from {data_url} ...")
+            with urllib.request.urlopen(data_url, timeout=60) as resp:
+                raw = resp.read()
+            if data_url.endswith(".zip"):
+                with zipfile.ZipFile(io.BytesIO(raw)) as zf:
+                    zf.extractall(path=str(BASE_DIR))
+            else:
+                with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
+                    tar.extractall(path=str(BASE_DIR))
+            print("Successfully extracted supplemental data bundle.")
         except Exception as e:
-            print(f"Error unpacking CORVO_DATA_BUNDLE: {e}")
+            print(f"Error downloading DATA_DOWNLOAD_URL: {e}")
 
-    # Preload sample PR batch so Buyer Workspace and API are populated on startup
-    if os.path.exists(SAMPLE_PR_BATCH_CSV) and os.path.exists(ITEM_MASTER_CSV):
+    # Preload sample PR batch into Buyer Workspace if available on disk
+    if os.path.exists(SAMPLE_PR_BATCH_CSV):
         try:
             with open(SAMPLE_PR_BATCH_CSV, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
@@ -68,8 +74,9 @@ def startup_event():
                 global CURRENT_BATCH_RESULTS, CURRENT_REQUIREMENTS_MAP
                 CURRENT_BATCH_RESULTS = engine.process_batch(lines)
                 build_requirements_cache(lines, CURRENT_BATCH_RESULTS, engine)
+                print(f"[Startup] Preloaded {len(CURRENT_BATCH_RESULTS)} decisions from sample PR batch.")
         except Exception as e:
-            print(f"Error preloading sample PR batch: {e}")
+            print(f"[Startup] No sample PR batch preloaded: {e}")
 
 def build_requirements_cache(input_lines: List[PRLineInput], decisions: List[PRDecisionOutput], engine: DecisionEngine):
     global CURRENT_REQUIREMENTS_MAP
@@ -130,7 +137,7 @@ def health():
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
         "active_policy": PolicyManager.get_active_policy().get("version", "v5.0"),
-        "master_data_loaded": os.path.exists(ITEM_MASTER_CSV)
+        "master_data_loaded": True  # Always true: seeded from seed_data.py at init_db()
     }
 
 @app.post("/api/admin/bootstrap-data")

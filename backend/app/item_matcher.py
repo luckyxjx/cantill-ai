@@ -45,8 +45,16 @@ def clean_text(text: str) -> str:
     return ' '.join(text.split())
 
 class ItemMatcher:
-    def __init__(self, item_master_path=ITEM_MASTER_CSV):
-        self.df = pd.read_csv(item_master_path)
+    def __init__(self, item_master_path=ITEM_MASTER_CSV, items_df=None):
+        # Accept a pre-loaded DataFrame (from SQLite) or fall back to reading CSV
+        if items_df is not None and not items_df.empty:
+            self.df = items_df
+        else:
+            import os
+            if os.path.exists(str(item_master_path)):
+                self.df = pd.read_csv(item_master_path)
+            else:
+                self.df = pd.DataFrame(columns=['item_code','description','uom','category','item_type','standard_price'])
         self.items = []
         self.item_map = {}
         for _, row in self.df.iterrows():
