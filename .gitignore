@@ -1,4 +1,4 @@
-# Kit & data directories (not for repo)
+# Kit & task data directories (REQUIRED: must not be in public repo)
 Cantill_FullStack_Task_Kit/
 data/
 

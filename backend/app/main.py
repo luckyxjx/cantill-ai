@@ -45,8 +45,21 @@ chat_assistant = ChatIntakeAssistant()
 def startup_event():
     init_db()
     PolicyManager.ensure_default_policy()
+
+    # If CORVO_DATA_BUNDLE environment variable is provided, auto-extract into DATA_DIR
+    data_bundle = os.environ.get("CORVO_DATA_BUNDLE")
+    if data_bundle and not os.path.exists(ITEM_MASTER_CSV):
+        try:
+            import base64, io, tarfile
+            raw = base64.b64decode(data_bundle.strip())
+            with tarfile.open(fileobj=io.BytesIO(raw), mode="r:gz") as tar:
+                tar.extractall(path=str(BASE_DIR))
+            print("Successfully extracted CORVO_DATA_BUNDLE from environment variable.")
+        except Exception as e:
+            print(f"Error unpacking CORVO_DATA_BUNDLE: {e}")
+
     # Preload sample PR batch so Buyer Workspace and API are populated on startup
-    if os.path.exists(SAMPLE_PR_BATCH_CSV):
+    if os.path.exists(SAMPLE_PR_BATCH_CSV) and os.path.exists(ITEM_MASTER_CSV):
         try:
             with open(SAMPLE_PR_BATCH_CSV, "r", encoding="utf-8") as f:
                 reader = csv.DictReader(f)
@@ -116,8 +129,43 @@ def health():
     return {
         "status": "healthy",
         "timestamp": datetime.now().isoformat(),
-        "active_policy": PolicyManager.get_active_policy().get("version", "v5.0")
+        "active_policy": PolicyManager.get_active_policy().get("version", "v5.0"),
+        "master_data_loaded": os.path.exists(ITEM_MASTER_CSV)
     }
+
+@app.post("/api/admin/bootstrap-data")
+async def bootstrap_data_endpoint(file: UploadFile = File(...)):
+    """
+    Ingests a zip or tar.gz archive containing the task data directory.
+    Enables zero-downtime data initialization on public deployments without committing files to git.
+    """
+    import zipfile, tarfile
+    content = await file.read()
+    filename = file.filename.lower()
+    
+    try:
+        if filename.endswith(".zip"):
+            with zipfile.ZipFile(io.BytesIO(content)) as z:
+                z.extractall(path=str(BASE_DIR))
+        elif filename.endswith((".tar.gz", ".tgz", ".tar")):
+            with tarfile.open(fileobj=io.BytesIO(content)) as t:
+                t.extractall(path=str(BASE_DIR))
+        else:
+            raise HTTPException(status_code=400, detail="File must be a .zip or .tar.gz archive containing data/")
+        
+        # Reload sample batch if available
+        if os.path.exists(SAMPLE_PR_BATCH_CSV) and os.path.exists(ITEM_MASTER_CSV):
+            with open(SAMPLE_PR_BATCH_CSV, "r", encoding="utf-8") as f:
+                reader = csv.DictReader(f)
+                lines = [PRLineInput(**r) for r in reader]
+                engine = DecisionEngine()
+                global CURRENT_BATCH_RESULTS, CURRENT_REQUIREMENTS_MAP
+                CURRENT_BATCH_RESULTS = engine.process_batch(lines)
+                build_requirements_cache(lines, CURRENT_BATCH_RESULTS, engine)
+
+        return {"message": "Data bootstrap archive extracted and loaded successfully!"}
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Failed to extract bootstrap data: {str(e)}")
 
 # 1. Batch Processing Endpoint
 @app.post("/api/process-batch")

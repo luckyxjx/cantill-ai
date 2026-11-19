@@ -27,8 +27,10 @@ RUN apt-get update && apt-get install -y --no-install-recommends \
 COPY requirements.txt .
 RUN pip install --no-cache-dir -r requirements.txt
 
-# Copy project files and master data
-COPY data/ /app/data/
+# Ensure data directory structure exists even if task data is omitted from repo
+RUN mkdir -p /app/data/contracts/pdf /app/data/master_data /app/data/pr_batches
+
+# Copy project files and backend
 COPY backend/ /app/backend/
 COPY --from=frontend-builder /app/frontend/dist /app/frontend/dist
 
