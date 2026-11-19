@@ -1,8 +1,5 @@
 import React, { useState, useRef, useEffect } from 'react';
-import { 
-  Send, Bot, User, CheckCircle2, AlertCircle, Sparkles, 
-  UploadCloud, FileText, ArrowRight, CornerDownLeft, ShieldAlert 
-} from 'lucide-react';
+import { Send, Bot, User, CheckCircle2, Upload, FileText } from 'lucide-react';
 
 interface RequesterChatProps {
   onPRCreated?: () => void;
@@ -16,11 +13,26 @@ interface Message {
   isConfirmation?: boolean;
 }
 
+// Helper to strip emoji and clean markdown
+const cleanText = (text: string): string => {
+  // Remove emoji (Unicode ranges)
+  let cleaned = text.replace(/[\u{1F600}-\u{1F64F}]/gu, ''); // Emoticons
+  cleaned = cleaned.replace(/[\u{1F300}-\u{1F5FF}]/gu, ''); // Misc Symbols
+  cleaned = cleaned.replace(/[\u{1F680}-\u{1F6FF}]/gu, ''); // Transport
+  cleaned = cleaned.replace(/[\u{1F1E0}-\u{1F1FF}]/gu, ''); // Flags
+  cleaned = cleaned.replace(/[\u{2600}-\u{26FF}]/gu, '');   // Misc symbols
+  cleaned = cleaned.replace(/[\u{2700}-\u{27BF}]/gu, '');   // Dingbats
+  // Strip markdown bold
+  cleaned = cleaned.replace(/\*\*(.*?)\*\*/g, '$1');
+  cleaned = cleaned.replace(/\*(.*?)\*/g, '$1');
+  return cleaned.trim();
+};
+
 export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBatchProcessed }) => {
   const [messages, setMessages] = useState<Message[]>([
     {
       sender: 'assistant',
-      text: "👋 Hello! I am your **Corvo Procurement Copilot**.\n\nType your purchase request in plain language (e.g. *\"Need 200 nitrile gloves for Chakan by next Friday\"*), and I will match items, check rate contracts, and route your requisition according to **Corvo Procurement Policy v5.0**.",
+      text: "Hello! I am your Corvo Procurement Assistant. Type your purchase request in plain language (e.g. \"Need 200 nitrile gloves for Chakan by next Friday\"), and I will match items, check rate contracts, and route your requisition according to Corvo Procurement Policy v5.0.",
       timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
     }
   ]);
@@ -40,11 +52,11 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
     scrollToBottom();
   }, [messages]);
 
-  const quickPrompts = [
-    "Need 200 nitrile gloves for Chakan by next Friday",
-    "Require 11 solenoid valves for CHK1 urgent by 2026-12-13",
-    "Need 4 EOT cranes 5 ton for Pune by 2026-12-01",
-    "Need 1 drinking water purifier 50 LPH for Bhosari by next week"
+  const quickScenarios = [
+    { label: 'Contract ceiling overflow', prompt: 'Need 200 nitrile gloves for Chakan by next Friday' },
+    { label: 'Emergency procurement', prompt: 'Require 11 solenoid valves for CHK1 urgent by 2026-12-13' },
+    { label: 'Capex item (crane)', prompt: 'Need 4 EOT cranes 5 ton for Pune by 2026-12-01' },
+    { label: 'New item sourcing', prompt: 'Need 1 drinking water purifier 50 LPH for Bhosari by next week' }
   ];
 
   const handleSendMessage = async (textToSend?: string) => {
@@ -76,11 +88,15 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
       const data = await res.json();
 
       setChatState(data.state);
+      
+      // Clean the assistant's reply
+      const cleanedReply = cleanText(data.reply);
+      
       setMessages((prev) => [
         ...prev,
         {
           sender: 'assistant',
-          text: data.reply,
+          text: cleanedReply,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' }),
           isConfirmation: data.state?.is_ready_to_create && !data.state?.confirmed
         }
@@ -94,7 +110,7 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
         ...prev,
         {
           sender: 'assistant',
-          text: `❌ Error processing request: ${err.message}`,
+          text: `Error processing request: ${err.message}`,
           timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
         }
       ]);
@@ -112,7 +128,7 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
     if (!file) return;
 
     setUploadingBatch(true);
-    setBatchStatus('Processing PR batch CSV against active policy...');
+    setBatchStatus('Processing PR batch CSV...');
 
     const formData = new FormData();
     formData.append('file', file);
@@ -124,10 +140,10 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
       });
       if (!res.ok) throw new Error('Batch processing failed');
       const data = await res.json();
-      setBatchStatus(`✅ Batch processed! Evaluated ${data.metrics.total_pr_lines} PR lines into ${data.metrics.total_requirements} requirements and ${data.metrics.total_pos_formed} POs.`);
+      setBatchStatus(`Batch processed: ${data.metrics.total_pr_lines} PR lines → ${data.metrics.total_requirements} requirements, ${data.metrics.total_pos_formed} POs`);
       if (onBatchProcessed) onBatchProcessed();
     } catch (err: any) {
-      setBatchStatus(`❌ Error uploading batch: ${err.message}`);
+      setBatchStatus(`Error: ${err.message}`);
     } finally {
       setUploadingBatch(false);
     }
@@ -135,17 +151,17 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
 
   return (
     <div className="grid grid-cols-1 lg:grid-cols-3 gap-6 max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8">
-      {/* Main Chat Stream (2 Cols) */}
-      <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 flex flex-col h-[750px]">
-        {/* Chat Header */}
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50 rounded-t-2xl">
+      {/* Chat Column (2/3) */}
+      <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-slate-200 flex flex-col h-[700px]">
+        {/* Header */}
+        <div className="px-6 py-4 border-b border-slate-200 flex items-center justify-between">
           <div className="flex items-center gap-3">
-            <div className="w-9 h-9 rounded-full bg-brand-100 text-brand-700 flex items-center justify-center font-semibold">
-              <Bot className="w-5 h-5 text-brand-600" />
+            <div className="w-9 h-9 rounded-full bg-slate-100 flex items-center justify-center">
+              <Bot className="w-5 h-5 text-slate-700" />
             </div>
             <div>
-              <h2 className="text-sm font-semibold text-slate-800">Procurement Intake Assistant</h2>
-              <p className="text-xs text-slate-500">Autonomous slot-filling & policy routing</p>
+              <h2 className="text-sm font-semibold text-slate-900">Procurement Assistant</h2>
+              <p className="text-xs text-slate-500">Slot-filling and policy routing</p>
             </div>
           </div>
           <button
@@ -153,95 +169,77 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
               setMessages([
                 {
                   sender: 'assistant',
-                  text: "Chat context cleared. What would you like to purchase today?",
+                  text: "Chat cleared. What would you like to purchase today?",
                   timestamp: new Date().toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })
                 }
               ]);
               setChatState(null);
             }}
-            className="text-xs text-slate-500 hover:text-slate-800 font-medium px-2.5 py-1 rounded border border-slate-200 hover:bg-slate-100 transition-colors"
+            className="text-xs text-slate-500 hover:text-slate-800 font-medium px-3 py-1.5 rounded border border-slate-200 hover:bg-slate-50 transition-colors"
           >
             New Session
           </button>
         </div>
 
-        {/* Message Bubble List */}
+        {/* Messages */}
         <div className="flex-1 overflow-y-auto p-6 space-y-4">
           {messages.map((m, idx) => (
             <div
               key={idx}
-              className={`flex gap-3 max-w-[85%] ${
-                m.sender === 'user' ? 'ml-auto flex-row-reverse' : ''
+              className={`flex gap-3 ${
+                m.sender === 'user' ? 'flex-row-reverse' : ''
               }`}
             >
               <div
-                className={`w-8 h-8 rounded-full flex items-center justify-center text-xs flex-shrink-0 ${
+                className={`w-7 h-7 rounded-full flex items-center justify-center text-xs flex-shrink-0 ${
                   m.sender === 'user'
-                    ? 'bg-slate-800 text-white'
-                    : 'bg-brand-50 text-brand-600 border border-brand-200'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-700'
                 }`}
               >
-                {m.sender === 'user' ? <User className="w-4 h-4" /> : <Bot className="w-4 h-4" />}
+                {m.sender === 'user' ? <User className="w-3.5 h-3.5" /> : <Bot className="w-3.5 h-3.5" />}
               </div>
 
               <div
-                className={`rounded-2xl px-4 py-3 text-sm leading-relaxed ${
+                className={`rounded-lg px-4 py-3 text-sm max-w-[80%] ${
                   m.sender === 'user'
-                    ? 'bg-brand-600 text-white shadow-xs rounded-tr-none'
-                    : 'bg-slate-100 text-slate-800 rounded-tl-none border border-slate-200/60'
+                    ? 'bg-slate-900 text-white'
+                    : 'bg-slate-100 text-slate-900 border border-slate-200'
                 }`}
               >
                 <div className="whitespace-pre-wrap">{m.text}</div>
                 <div
-                  className={`text-[10px] mt-1 text-right ${
-                    m.sender === 'user' ? 'text-brand-100' : 'text-slate-400'
+                  className={`text-[10px] mt-1 ${
+                    m.sender === 'user' ? 'text-slate-400' : 'text-slate-500'
                   }`}
                 >
                   {m.timestamp}
                 </div>
 
-                {/* Inline Confirmation Card */}
+                {/* Inline Confirmation */}
                 {m.isConfirmation && (
-                  <div className="mt-3 pt-3 border-t border-slate-200 flex items-center gap-2">
-                    <button
-                      onClick={handleConfirm}
-                      className="px-4 py-1.5 bg-brand-600 hover:bg-brand-700 text-white font-medium text-xs rounded-lg shadow-sm transition-colors flex items-center gap-1.5"
-                    >
-                      <CheckCircle2 className="w-3.5 h-3.5" /> Confirm & Create PR
-                    </button>
-                  </div>
+                  <button
+                    onClick={handleConfirm}
+                    className="mt-3 px-4 py-1.5 bg-slate-900 hover:bg-slate-800 text-white font-medium text-xs rounded transition-colors flex items-center gap-1.5"
+                  >
+                    <CheckCircle2 className="w-3.5 h-3.5" /> Confirm & Create PR
+                  </button>
                 )}
               </div>
             </div>
           ))}
 
           {loading && (
-            <div className="flex gap-3 max-w-[80%] items-center text-slate-400 text-sm">
-              <Bot className="w-5 h-5 animate-bounce text-brand-500" />
-              <span>Analyzing policy & matching items...</span>
+            <div className="flex gap-3 items-center text-slate-500 text-sm">
+              <Bot className="w-5 h-5 text-slate-700" />
+              <span>Analyzing policy...</span>
             </div>
           )}
           <div ref={messagesEndRef} />
         </div>
 
-        {/* Quick Prompts */}
-        <div className="px-6 py-2 bg-slate-50 border-t border-slate-100 flex items-center gap-2 overflow-x-auto text-xs">
-          <span className="text-slate-400 flex items-center gap-1 font-medium whitespace-nowrap">
-            <Sparkles className="w-3 h-3 text-amber-500" /> Examples:
-          </span>
-          {quickPrompts.map((p, i) => (
-            <button
-              key={i}
-              onClick={() => handleSendMessage(p)}
-              className="px-2.5 py-1 bg-white hover:bg-slate-100 border border-slate-200 rounded-full text-slate-600 whitespace-nowrap transition-colors"
-            >
-              {p}
-            </button>
-          ))}
-        </div>
-
-        {/* Input Bar */}
-        <div className="p-4 border-t border-slate-200 bg-white rounded-b-2xl">
+        {/* Input */}
+        <div className="p-4 border-t border-slate-200">
           <form
             onSubmit={(e) => {
               e.preventDefault();
@@ -253,40 +251,36 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
               type="text"
               value={input}
               onChange={(e) => setInput(e.target.value)}
-              placeholder="e.g. Need 50 solenoid valves for Chakan plant by next Friday..."
-              className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500 transition-all"
+              placeholder="e.g. Need 50 solenoid valves for Chakan by next Friday..."
+              className="flex-1 px-4 py-2.5 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
             />
             <button
               type="submit"
               disabled={loading || !input.trim()}
-              className="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 disabled:opacity-50 text-white rounded-xl font-medium text-sm flex items-center gap-1.5 transition-all shadow-xs"
+              className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-lg font-medium text-sm flex items-center gap-1.5 transition-colors"
             >
               <Send className="w-4 h-4" />
-              <span className="hidden sm:inline">Send</span>
             </button>
           </form>
         </div>
       </div>
 
-      {/* Right Column: Active Slot Extraction & Batch Uploader */}
+      {/* Right Column */}
       <div className="space-y-6">
-        {/* Requisition Status Slot Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
+        {/* Slot Card */}
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
           <div className="flex items-center justify-between mb-4">
-            <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-              <CheckCircle2 className="w-4 h-4 text-brand-600" />
-              Requisition Slots
-            </h3>
-            <span className={`text-[11px] font-semibold px-2 py-0.5 rounded-full ${
+            <h3 className="text-sm font-semibold text-slate-900">Extracted Slots</h3>
+            <span className={`text-[11px] font-medium px-2 py-0.5 rounded ${
               chatState?.is_ready_to_create
                 ? 'bg-emerald-50 text-emerald-700 border border-emerald-200'
-                : 'bg-amber-50 text-amber-700 border border-amber-200'
+                : 'bg-slate-100 text-slate-600 border border-slate-200'
             }`}>
-              {chatState?.is_ready_to_create ? 'Ready for Confirmation' : 'In Progress'}
+              {chatState?.is_ready_to_create ? 'Ready' : 'In Progress'}
             </span>
           </div>
 
-          <div className="space-y-3 text-xs">
+          <div className="space-y-2.5 text-xs">
             <div className="flex justify-between py-1.5 border-b border-slate-100">
               <span className="text-slate-500">Item Code:</span>
               <span className="font-mono font-medium text-slate-800">
@@ -296,7 +290,7 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
 
             <div className="flex justify-between py-1.5 border-b border-slate-100">
               <span className="text-slate-500">Description:</span>
-              <span className="font-medium text-slate-800 text-right max-w-[180px] truncate" title={chatState?.matched_description}>
+              <span className="font-medium text-slate-800 text-right max-w-[140px] truncate" title={chatState?.matched_description}>
                 {chatState?.matched_description || '—'}
               </span>
             </div>
@@ -334,41 +328,32 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
                 {chatState?.urgency || 'Normal'}
               </span>
             </div>
-
-            {chatState?.item_code === 'NEW' && (
-              <div className="flex justify-between py-1.5 border-b border-slate-100">
-                <span className="text-slate-500">Est. Unit Price:</span>
-                <span className="font-medium text-slate-800">
-                  {chatState?.estimated_unit_price ? `₹${chatState.estimated_unit_price.toLocaleString()}` : 'Required for new item'}
-                </span>
-              </div>
-            )}
           </div>
 
           {chatState?.is_ready_to_create && !chatState?.confirmed && (
             <button
               onClick={handleConfirm}
-              className="w-full mt-5 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center gap-1.5"
+              className="w-full mt-5 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-xs font-semibold transition-colors flex items-center justify-center gap-1.5"
             >
-              <CheckCircle2 className="w-4 h-4" /> Submit Requisition Now
+              <CheckCircle2 className="w-4 h-4" /> Submit Requisition
             </button>
           )}
         </div>
 
-        {/* Batch PR CSV Upload Card */}
-        <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6">
-          <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2 mb-2">
-            <UploadCloud className="w-4 h-4 text-brand-600" />
-            Upload PR Batch CSV
+        {/* Batch Upload */}
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+          <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2 mb-3">
+            <Upload className="w-4 h-4 text-slate-700" />
+            Batch CSV Upload
           </h3>
           <p className="text-xs text-slate-500 mb-4">
-            Upload a bulk PR batch CSV (e.g. 186-line batch) to evaluate against the active policy.
+            Upload a PR batch CSV to evaluate against active policy.
           </p>
 
-          <label className="border-2 border-dashed border-slate-200 hover:border-brand-400 rounded-xl p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors bg-slate-50/50 hover:bg-slate-50">
-            <FileText className="w-8 h-8 text-slate-400 mb-2" />
-            <span className="text-xs font-semibold text-brand-600">Click to choose PR batch CSV</span>
-            <span className="text-[11px] text-slate-400 mt-1">Accepts sample_pr_batch.csv format</span>
+          <label className="border-2 border-dashed border-slate-200 hover:border-slate-400 rounded-lg p-5 flex flex-col items-center justify-center text-center cursor-pointer transition-colors">
+            <FileText className="w-7 h-7 text-slate-400 mb-2" />
+            <span className="text-xs font-semibold text-slate-700">Choose CSV file</span>
+            <span className="text-[11px] text-slate-400 mt-1">sample_pr_batch.csv format</span>
             <input
               type="file"
               accept=".csv"
@@ -379,13 +364,28 @@ export const RequesterChat: React.FC<RequesterChatProps> = ({ onPRCreated, onBat
           </label>
 
           {batchStatus && (
-            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs leading-relaxed text-slate-700">
+            <div className="mt-3 p-3 bg-slate-50 border border-slate-200 rounded-lg text-xs text-slate-700">
               {batchStatus}
             </div>
           )}
+        </div>
+
+        {/* Sample Scenarios */}
+        <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6">
+          <h3 className="text-sm font-semibold text-slate-900 mb-3">Sample Scenarios</h3>
+          <div className="space-y-2">
+            {quickScenarios.map((scenario, idx) => (
+              <button
+                key={idx}
+                onClick={() => handleSendMessage(scenario.prompt)}
+                className="w-full text-left px-3 py-2 bg-slate-50 hover:bg-slate-100 border border-slate-200 rounded text-xs text-slate-700 font-medium transition-colors"
+              >
+                {scenario.label}
+              </button>
+            ))}
+          </div>
         </div>
       </div>
     </div>
   );
 };
-

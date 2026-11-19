@@ -75,47 +75,39 @@ export const SuppliersExportView: React.FC = () => {
   return (
     <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 space-y-8">
       {/* Downloads Action Bar */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row items-center justify-between gap-4">
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-6 flex flex-col md:flex-row items-center justify-between gap-4">
         <div>
-          <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-            <FileSpreadsheet className="w-5 h-5 text-brand-600" />
-            Evaluation Export Hub
-          </h2>
+          <h2 className="text-base font-bold text-slate-900">Export Deliverables</h2>
           <p className="text-xs text-slate-500 mt-1">
-            Export required CSV deliverables for Run 1, Run 2, and preferred supplier lists matching exact guidelines.
+            Export decisions CSV and preferred supplier lists.
           </p>
         </div>
 
         <div className="flex flex-wrap items-center gap-3">
           <button
             onClick={handleDownloadDecisionsCSV}
-            className="px-4 py-2.5 bg-brand-600 hover:bg-brand-700 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-2 transition-colors"
+            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white rounded-lg text-sm font-medium transition-colors"
           >
-            <Download className="w-4 h-4" />
-            Download Decisions CSV (12 Columns)
+            Export Decisions CSV
           </button>
 
           <button
             onClick={handleDownloadPreferredCSV}
-            className="px-4 py-2.5 bg-slate-900 hover:bg-slate-800 text-white rounded-xl text-xs font-semibold shadow-xs flex items-center gap-2 transition-colors"
+            className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 rounded-lg text-sm font-medium transition-colors"
           >
-            <Download className="w-4 h-4" />
-            Export Preferred Suppliers CSV (Top 3)
+            Export Preferred Suppliers
           </button>
         </div>
       </div>
 
       <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
         {/* Left Column: Preferred Supplier Explorer (2 Cols) */}
-        <div className="lg:col-span-2 bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-6">
+        <div className="lg:col-span-2 bg-white rounded-lg shadow-sm border border-slate-200 p-6 space-y-6">
           <div className="flex flex-col sm:flex-row items-start sm:items-center justify-between gap-4 border-b border-slate-100 pb-4">
             <div>
-              <h3 className="text-base font-bold text-slate-900 flex items-center gap-2">
-                <Users className="w-5 h-5 text-brand-600" />
-                Preferred Supplier List (Policy Section 6)
-              </h3>
+              <h3 className="text-base font-bold text-slate-900">Preferred Supplier List</h3>
               <p className="text-xs text-slate-500 mt-0.5">
-                Automatically scored from PO history, contract history, on-time record, and quality rating.
+                Scored from PO history, contracts, on-time delivery, and quality ratings.
               </p>
             </div>
 

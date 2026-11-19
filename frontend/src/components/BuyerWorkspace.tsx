@@ -1,8 +1,5 @@
 import React, { useState } from 'react';
-import { 
-  CheckCircle, AlertTriangle, ChevronDown, ChevronRight, 
-  Search, Filter, ShieldCheck, ArrowRight, X, ExternalLink, FileCheck 
-} from 'lucide-react';
+import { CheckCircle, X, Search } from 'lucide-react';
 import { BuyerRequirement } from '../types';
 
 interface BuyerWorkspaceProps {
@@ -10,35 +7,54 @@ interface BuyerWorkspaceProps {
   onRefresh: () => void;
 }
 
+// Helper to format INR with Indian grouping
+const formatINR = (value: number) => {
+  return new Intl.NumberFormat('en-IN', {
+    style: 'currency',
+    currency: 'INR',
+    minimumFractionDigits: 0,
+    maximumFractionDigits: 0,
+  }).format(value).replace('₹', '₹ ');
+};
+
 export const BuyerWorkspace: React.FC<BuyerWorkspaceProps> = ({ requirements, onRefresh }) => {
   const [searchTerm, setSearchTerm] = useState('');
-  const [filterPlant, setFilterPlant] = useState('ALL');
-  const [filterRoute, setFilterRoute] = useState('ALL');
-  const [filterStatus, setFilterStatus] = useState('ALL');
-  const [expandedId, setExpandedId] = useState<string | null>(null);
-
-  // Override Modal state
-  const [overrideModalOpen, setOverrideModalOpen] = useState(false);
+  const [activeFilter, setActiveFilter] = useState('all');
+  const [drawerOpen, setDrawerOpen] = useState(false);
   const [selectedReq, setSelectedReq] = useState<BuyerRequirement | null>(null);
+  const [overrideMode, setOverrideMode] = useState(false);
   const [overrideReason, setOverrideReason] = useState('');
-  const [overrideRoute, setOverrideRoute] = useState('');
-  const [overrideSupplier, setOverrideSupplier] = useState('');
-  const [submittingOverride, setSubmittingOverride] = useState(false);
 
+  // Calculate metrics
+  const totalReqs = requirements.length;
+  const totalLines = requirements.reduce((sum, r) => sum + r.pr_lines.length, 0);
+  const directPOs = requirements.filter(r => r.decision === 'PO').length;
+  const sourcing = requirements.filter(r => r.decision !== 'PO').length;
+  const pending = requirements.filter(r => r.status === 'PENDING').length;
+
+  // Filter logic
   const filtered = requirements.filter((r) => {
     const matchesSearch = 
       r.group_id.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.item_code.toLowerCase().includes(searchTerm.toLowerCase()) ||
       r.item_description.toLowerCase().includes(searchTerm.toLowerCase()) ||
-      (r.po_id && r.po_id.toLowerCase().includes(searchTerm.toLowerCase())) ||
-      r.pr_lines.some((p) => p.pr_no.toLowerCase().includes(searchTerm.toLowerCase()));
+      r.plant.toLowerCase().includes(searchTerm.toLowerCase()) ||
+      (r.supplier_id && r.supplier_id.toLowerCase().includes(searchTerm.toLowerCase()));
 
-    const matchesPlant = filterPlant === 'ALL' || r.plant === filterPlant;
-    const matchesRoute = filterRoute === 'ALL' || r.route === filterRoute;
-    const matchesStatus = filterStatus === 'ALL' || r.status === filterStatus;
+    if (!matchesSearch) return false;
 
-    return matchesSearch && matchesPlant && matchesRoute && matchesStatus;
+    if (activeFilter === 'directpos') return r.decision === 'PO';
+    if (activeFilter === 'sourcing') return r.decision !== 'PO';
+    if (activeFilter === 'pending') return r.status === 'PENDING';
+    return true;
   });
+
+  const handleRowClick = (req: BuyerRequirement) => {
+    setSelectedReq(req);
+    setOverrideMode(false);
+    setOverrideReason('');
+    setDrawerOpen(true);
+  };
 
   const handleApprove = async (groupId: string) => {
     try {
@@ -48,393 +64,374 @@ export const BuyerWorkspace: React.FC<BuyerWorkspaceProps> = ({ requirements, on
         body: JSON.stringify({ action_by: 'Buyer Officer' })
       });
       if (!res.ok) throw new Error('Approval failed');
+      setDrawerOpen(false);
       onRefresh();
     } catch (err: any) {
-      alert(`Error approving requirement: ${err.message}`);
+      alert(`Error: ${err.message}`);
     }
   };
 
-  const handleOpenOverride = (req: BuyerRequirement) => {
-    setSelectedReq(req);
-    setOverrideReason('');
-    setOverrideRoute(req.route);
-    setOverrideSupplier(req.supplier_id || '');
-    setOverrideModalOpen(true);
+  const handleBulkApprove = async () => {
+    if (!confirm(`Approve all ${pending} pending requirements?`)) return;
+    
+    try {
+      const pendingReqs = requirements.filter(r => r.status === 'PENDING');
+      await Promise.all(
+        pendingReqs.map(r => 
+          fetch(`/api/buyer/approve/${r.group_id}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ action_by: 'Buyer Officer' })
+          })
+        )
+      );
+      onRefresh();
+    } catch (err: any) {
+      alert(`Error: ${err.message}`);
+    }
   };
 
-  const handleSubmitOverride = async (e: React.FormEvent) => {
-    e.preventDefault();
-    if (!selectedReq) return;
-    if (!overrideReason.trim()) {
-      alert('Mandatory explanation comment is required to override.');
+  const handleOverrideSubmit = async () => {
+    if (!selectedReq || !overrideReason.trim()) {
+      alert('Justification is required.');
       return;
     }
 
-    setSubmittingOverride(true);
     try {
       const res = await fetch(`/api/buyer/override/${selectedReq.group_id}`, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({
           override_reason: overrideReason.trim(),
-          new_route: overrideRoute !== selectedReq.route ? overrideRoute : null,
-          new_supplier_id: overrideSupplier !== selectedReq.supplier_id ? overrideSupplier : null,
           action_by: 'Buyer Lead'
         })
       });
       if (!res.ok) throw new Error('Override failed');
-      setOverrideModalOpen(false);
+      setDrawerOpen(false);
+      setOverrideMode(false);
       onRefresh();
     } catch (err: any) {
-      alert(`Error saving override: ${err.message}`);
-    } finally {
-      setSubmittingOverride(false);
+      alert(`Error: ${err.message}`);
     }
   };
 
-  const getRouteBadge = (route: string) => {
-    switch (route) {
-      case 'CONTRACT_PO':
-        return 'bg-blue-50 text-blue-700 border-blue-200';
-      case 'SPOT_PO':
-        return 'bg-emerald-50 text-emerald-700 border-emerald-200';
-      case 'EMERGENCY_PO':
-        return 'bg-red-50 text-red-700 border-red-200';
-      case 'RFQ':
-        return 'bg-amber-50 text-amber-700 border-amber-200';
-      case 'RFP':
-        return 'bg-purple-50 text-purple-700 border-purple-200';
-      case 'CAPEX_SOURCING':
-        return 'bg-indigo-50 text-indigo-700 border-indigo-200';
-      case 'NEW_ITEM_SOURCING':
-        return 'bg-cyan-50 text-cyan-700 border-cyan-200';
-      default:
-        return 'bg-slate-100 text-slate-700 border-slate-200';
-    }
+  const handleExportCSV = () => {
+    window.location.href = '/api/export-decisions';
   };
 
   return (
-    <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 space-y-6">
-      {/* Filters & Search Header */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-5">
+    <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 space-y-4">
+      {/* Summary Bar */}
+      <div className="flex items-center justify-between text-sm">
+        <div className="text-slate-700">
+          Current Batch: <span className="font-semibold text-slate-900">{totalReqs} requirements</span> clubbed from{' '}
+          <span className="font-semibold text-slate-900">{totalLines} lines</span> |{' '}
+          <span className="font-semibold text-slate-900">{directPOs} Direct POs</span> |{' '}
+          <span className="font-semibold text-slate-900">{sourcing} Sourcing</span> |{' '}
+          <span className="font-semibold text-slate-900">{pending} pending review</span>
+        </div>
+        <div className="flex items-center gap-2">
+          <button
+            onClick={handleBulkApprove}
+            disabled={pending === 0}
+            className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg disabled:opacity-50 disabled:cursor-not-allowed transition-colors"
+          >
+            Bulk Approve Pending
+          </button>
+          <button
+            onClick={handleExportCSV}
+            className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors"
+          >
+            Export Decisions CSV
+          </button>
+        </div>
+      </div>
+
+      {/* Search and Filter Pills */}
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 p-4">
         <div className="flex flex-col md:flex-row gap-4 items-center justify-between">
-          {/* Search Box */}
-          <div className="relative w-full md:w-80">
-            <Search className="w-4 h-4 absolute left-3 top-3 text-slate-400" />
+          <div className="relative w-full md:w-96">
+            <Search className="w-4 h-4 absolute left-3 top-2.5 text-slate-400" />
             <input
               type="text"
               value={searchTerm}
               onChange={(e) => setSearchTerm(e.target.value)}
-              placeholder="Search by ID, item, PO or PR..."
-              className="w-full pl-9 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/30 focus:border-brand-500"
+              placeholder="Search by Req ID, item, plant, supplier..."
+              className="w-full pl-9 pr-3 py-2 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
             />
           </div>
 
-          {/* Dropdown Filters */}
-          <div className="flex flex-wrap items-center gap-3 w-full md:w-auto">
-            <div className="flex items-center gap-1.5 text-xs text-slate-500">
-              <Filter className="w-3.5 h-3.5" /> Filter:
-            </div>
-
-            <select
-              value={filterPlant}
-              onChange={(e) => setFilterPlant(e.target.value)}
-              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none"
-            >
-              <option value="ALL">All Plants</option>
-              <option value="PUN1">PUN1 (Bhosari)</option>
-              <option value="CHK1">CHK1 (Chakan)</option>
-            </select>
-
-            <select
-              value={filterRoute}
-              onChange={(e) => setFilterRoute(e.target.value)}
-              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none"
-            >
-              <option value="ALL">All Routes</option>
-              <option value="CONTRACT_PO">Contract PO</option>
-              <option value="SPOT_PO">Spot PO</option>
-              <option value="EMERGENCY_PO">Emergency PO</option>
-              <option value="RFQ">RFQ (Quotes)</option>
-              <option value="RFP">RFP (Formal)</option>
-              <option value="CAPEX_SOURCING">Capex Sourcing</option>
-              <option value="NEW_ITEM_SOURCING">New Item Sourcing</option>
-              <option value="NOT_PROCESSED">Not Processed</option>
-            </select>
-
-            <select
-              value={filterStatus}
-              onChange={(e) => setFilterStatus(e.target.value)}
-              className="px-3 py-1.5 bg-slate-50 border border-slate-200 rounded-lg text-xs font-medium text-slate-700 focus:outline-none"
-            >
-              <option value="ALL">All Statuses</option>
-              <option value="PENDING">Pending Review</option>
-              <option value="APPROVED">Approved</option>
-              <option value="OVERRIDDEN">Overridden</option>
-            </select>
+          <div className="flex items-center gap-2">
+            {[
+              { id: 'all', label: 'All', count: totalReqs },
+              { id: 'directpos', label: 'Direct POs', count: directPOs },
+              { id: 'sourcing', label: 'Sourcing', count: sourcing },
+              { id: 'pending', label: 'Pending Review', count: pending },
+            ].map((filter) => (
+              <button
+                key={filter.id}
+                onClick={() => setActiveFilter(filter.id)}
+                className={`px-3 py-1.5 text-xs font-medium rounded-lg border transition-colors whitespace-nowrap ${
+                  activeFilter === filter.id
+                    ? 'bg-slate-900 text-white border-slate-900'
+                    : 'bg-white text-slate-700 border-slate-200 hover:bg-slate-50'
+                }`}
+              >
+                {filter.label} ({filter.count})
+              </button>
+            ))}
           </div>
         </div>
       </div>
 
-      {/* Requirements List */}
-      <div className="bg-white rounded-2xl shadow-sm border border-slate-200 overflow-hidden">
-        <div className="px-6 py-4 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-          <div>
-            <h2 className="text-sm font-semibold text-slate-800">Procurement Requisitions & Decisions</h2>
-            <p className="text-xs text-slate-500">Showing {filtered.length} clubbed requirements from active PR batch</p>
-          </div>
-        </div>
-
-        <div className="divide-y divide-slate-100">
-          {filtered.length === 0 ? (
-            <div className="text-center py-12 text-slate-400 text-sm">
-              No requirements found matching current filters.
-            </div>
-          ) : (
-            filtered.map((req) => {
-              const isExpanded = expandedId === req.group_id;
-              return (
-                <div key={req.group_id} className="p-5 hover:bg-slate-50/60 transition-colors">
-                  <div className="flex flex-col lg:flex-row lg:items-center justify-between gap-4">
-                    {/* Left: Identifiers, Item & Clubbed stats */}
-                    <div className="flex items-start gap-3">
-                      <button
-                        onClick={() => setExpandedId(isExpanded ? null : req.group_id)}
-                        className="p-1 rounded hover:bg-slate-200 text-slate-400 hover:text-slate-700 transition-colors mt-0.5"
-                      >
-                        {isExpanded ? <ChevronDown className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
-                      </button>
-
-                      <div>
-                        <div className="flex items-center gap-2 mb-1">
-                          <span className="font-mono text-xs font-bold text-slate-900 bg-slate-100 px-2 py-0.5 rounded border border-slate-200">
-                            {req.group_id}
-                          </span>
-                          <span className={`text-[11px] font-semibold px-2.5 py-0.5 rounded-full border ${getRouteBadge(req.route)}`}>
-                            {req.route}
-                          </span>
-                          <span className="text-xs font-semibold px-2 py-0.5 rounded bg-slate-100 text-slate-700">
-                            {req.plant}
-                          </span>
-                          {req.is_emergency && (
-                            <span className="text-[11px] font-bold px-2 py-0.5 rounded bg-red-100 text-red-700 border border-red-200">
-                              EMERGENCY
-                            </span>
-                          )}
-                        </div>
-
-                        <h3 className="text-sm font-semibold text-slate-800 flex items-center gap-2">
-                          {req.item_description}
-                          <span className="text-xs font-mono font-normal text-slate-500">({req.item_code})</span>
-                        </h3>
-
-                        <p className="text-xs text-slate-500 mt-0.5">
-                          Total: <span className="font-medium text-slate-700">{req.total_quantity.toLocaleString()} {req.uom}</span> · Value: <span className="font-semibold text-slate-900">₹{req.group_value_inr.toLocaleString(undefined, { minimumFractionDigits: 2 })}</span> · {req.pr_lines.length} PR Line{req.pr_lines.length > 1 ? 's' : ''}
-                        </p>
-                      </div>
-                    </div>
-
-                    {/* Middle: Supplier / PO or Sourcing suggestions */}
-                    <div className="lg:max-w-xs text-xs space-y-1">
+      {/* Dense Table */}
+      <div className="bg-white rounded-lg shadow-sm border border-slate-200 overflow-hidden">
+        <div className="overflow-x-auto">
+          <table className="w-full text-sm">
+            <thead>
+              <tr className="border-b border-slate-200 bg-slate-50 text-slate-700 text-xs font-medium whitespace-nowrap">
+                <th className="text-left py-3 px-4">Req ID</th>
+                <th className="text-left py-3 px-4">Item & Specification</th>
+                <th className="text-left py-3 px-4">Plant</th>
+                <th className="text-right py-3 px-4 tabular-nums">Quantity</th>
+                <th className="text-right py-3 px-4 tabular-nums">Value (INR)</th>
+                <th className="text-left py-3 px-4">Route</th>
+                <th className="text-left py-3 px-4">Allocated Supplier / Quotes</th>
+                <th className="text-left py-3 px-4">Status</th>
+                <th className="text-left py-3 px-4">Action</th>
+              </tr>
+            </thead>
+            <tbody className="divide-y divide-slate-100 text-slate-700">
+              {filtered.length === 0 ? (
+                <tr>
+                  <td colSpan={9} className="text-center py-12 text-slate-400">
+                    No requirements found.
+                  </td>
+                </tr>
+              ) : (
+                filtered.map((req) => (
+                  <tr
+                    key={req.group_id}
+                    onClick={() => handleRowClick(req)}
+                    className="hover:bg-slate-50 cursor-pointer transition-colors"
+                  >
+                    <td className="py-3 px-4 font-mono text-xs font-semibold text-slate-900 bg-slate-100 border border-slate-200">
+                      {req.group_id}
+                    </td>
+                    <td className="py-3 px-4">
+                      <div className="font-medium text-slate-900">{req.item_description}</div>
+                      <div className="text-xs text-slate-500 font-mono">{req.item_code}</div>
+                    </td>
+                    <td className="py-3 px-4 font-medium">{req.plant}</td>
+                    <td className="py-3 px-4 text-right tabular-nums font-medium">
+                      {req.total_quantity.toLocaleString()} {req.uom}
+                    </td>
+                    <td className="py-3 px-4 text-right tabular-nums font-semibold text-slate-900">
+                      {formatINR(req.group_value_inr)}
+                    </td>
+                    <td className="py-3 px-4">
+                      <span className="px-2 py-0.5 rounded text-xs font-mono font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                        {req.route}
+                      </span>
+                    </td>
+                    <td className="py-3 px-4">
                       {req.decision === 'PO' ? (
-                        <div>
-                          <div className="flex items-center gap-1.5 font-semibold text-emerald-700">
-                            <FileCheck className="w-4 h-4" />
-                            <span>Direct PO: {req.po_id || 'PO-Pending'}</span>
-                          </div>
-                          <p className="text-slate-600 truncate">
-                            Supplier: <span className="font-medium text-slate-800">{req.supplier_id}</span> ({req.supplier_name || 'Active'}) @ ₹{req.unit_price?.toLocaleString()}
-                          </p>
+                        <div className="text-xs">
+                          <div className="font-semibold text-slate-900">{req.supplier_id}</div>
+                          <div className="text-slate-500">{req.supplier_name || 'Contracted'}</div>
                         </div>
                       ) : (
-                        <div>
-                          <div className="font-semibold text-amber-700">
-                            Sourcing Request ({req.decision})
-                          </div>
-                          <p className="text-slate-600 truncate" title={req.suggested_suppliers.map(s => s.supplier_id).join(', ')}>
-                            Suggested: {req.suggested_suppliers.length > 0 ? (
-                              req.suggested_suppliers.map((s) => s.supplier_id).join(', ')
-                            ) : (
-                              <span className="italic text-slate-400">Buyer to identify suppliers</span>
-                            )}
-                          </p>
+                        <div className="text-xs text-slate-600">
+                          {req.suggested_suppliers.length > 0
+                            ? req.suggested_suppliers.map(s => s.supplier_id).join(', ')
+                            : 'Buyer to source'}
                         </div>
                       )}
-                      <div className="text-[11px] text-slate-400 italic truncate" title={req.reason}>
-                        {req.reason} ({req.policy_version})
-                      </div>
-                    </div>
-
-                    {/* Right: Status & Actions */}
-                    <div className="flex items-center gap-3 self-end lg:self-center">
+                    </td>
+                    <td className="py-3 px-4">
                       {req.status === 'APPROVED' && (
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-emerald-100 text-emerald-800 flex items-center gap-1">
-                          <CheckCircle className="w-3.5 h-3.5" /> Approved
+                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                          Approved
+                        </span>
+                      )}
+                      {req.status === 'PENDING' && (
+                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-amber-50 text-amber-800 border border-amber-200">
+                          Pending Review
                         </span>
                       )}
                       {req.status === 'OVERRIDDEN' && (
-                        <span className="text-xs font-semibold px-2.5 py-1 rounded-full bg-purple-100 text-purple-800 flex items-center gap-1" title={req.override_reason}>
-                          <AlertTriangle className="w-3.5 h-3.5" /> Overridden
+                        <span className="px-2 py-0.5 rounded text-xs font-medium bg-slate-100 text-slate-700 border border-slate-200">
+                          Overridden
                         </span>
                       )}
-
+                    </td>
+                    <td className="py-3 px-4">
                       {req.status === 'PENDING' && (
-                        <div className="flex items-center gap-2">
-                          <button
-                            onClick={() => handleApprove(req.group_id)}
-                            className="px-3 py-1.5 bg-brand-600 hover:bg-brand-700 text-white text-xs font-semibold rounded-lg shadow-xs transition-colors flex items-center gap-1"
-                          >
-                            <CheckCircle className="w-3.5 h-3.5" /> Approve
-                          </button>
-                          <button
-                            onClick={() => handleOpenOverride(req)}
-                            className="px-3 py-1.5 bg-slate-100 hover:bg-slate-200 text-slate-700 text-xs font-semibold rounded-lg border border-slate-200 transition-colors"
-                          >
-                            Override
-                          </button>
-                        </div>
+                        <button
+                          onClick={(e) => {
+                            e.stopPropagation();
+                            handleApprove(req.group_id);
+                          }}
+                          className="px-3 py-1 bg-slate-900 hover:bg-slate-800 text-white text-xs font-medium rounded transition-colors"
+                        >
+                          Approve
+                        </button>
                       )}
-                    </div>
-                  </div>
-
-                  {/* Expandable PR Lines Table */}
-                  {isExpanded && (
-                    <div className="mt-4 pt-4 border-t border-slate-100 bg-slate-50/70 rounded-xl p-4">
-                      <h4 className="text-xs font-semibold text-slate-700 mb-2">
-                        Contributing Purchase Requisition Lines ({req.pr_lines.length})
-                      </h4>
-                      <div className="overflow-x-auto">
-                        <table className="w-full text-left text-xs text-slate-600">
-                          <thead>
-                            <tr className="border-b border-slate-200 text-slate-400 uppercase text-[10px]">
-                              <th className="py-1 px-2">PR Line</th>
-                              <th className="py-1 px-2">Created</th>
-                              <th className="py-1 px-2">Requester / Dept</th>
-                              <th className="py-1 px-2 text-right">Qty</th>
-                              <th className="py-1 px-2">Need By</th>
-                              <th className="py-1 px-2">Urgency</th>
-                            </tr>
-                          </thead>
-                          <tbody>
-                            {req.pr_lines.map((p, pIdx) => (
-                              <tr key={pIdx} className="border-b border-slate-100/50">
-                                <td className="py-1 px-2 font-mono font-medium text-slate-900">{p.pr_no}/{p.pr_line}</td>
-                                <td className="py-1 px-2">{p.created_at}</td>
-                                <td className="py-1 px-2">{p.requester} ({p.department})</td>
-                                <td className="py-1 px-2 text-right font-medium text-slate-900">{p.quantity.toLocaleString()} {p.uom}</td>
-                                <td className="py-1 px-2">{p.need_by_date}</td>
-                                <td className="py-1 px-2">
-                                  <span className={p.urgency === 'Emergency' ? 'text-red-600 font-bold' : ''}>
-                                    {p.urgency}
-                                  </span>
-                                </td>
-                              </tr>
-                            ))}
-                          </tbody>
-                        </table>
-                      </div>
-                    </div>
-                  )}
-                </div>
-              );
-            })
-          )}
+                    </td>
+                  </tr>
+                ))
+              )}
+            </tbody>
+          </table>
         </div>
       </div>
 
-      {/* Override Modal */}
-      {overrideModalOpen && selectedReq && (
-        <div className="fixed inset-0 z-50 bg-slate-900/40 backdrop-blur-xs flex items-center justify-center p-4">
-          <div className="bg-white rounded-2xl shadow-xl border border-slate-200 max-w-lg w-full p-6">
-            <div className="flex items-center justify-between mb-4 border-b border-slate-100 pb-3">
-              <h3 className="text-sm font-semibold text-slate-900 flex items-center gap-2">
-                <AlertTriangle className="w-4 h-4 text-purple-600" />
-                Override Procurement Decision ({selectedReq.group_id})
-              </h3>
+      {/* Slide-over Drawer */}
+      {drawerOpen && selectedReq && (
+        <div className="fixed inset-0 z-50 overflow-hidden">
+          <div className="absolute inset-0 bg-slate-900/40 backdrop-blur-sm" onClick={() => setDrawerOpen(false)} />
+          
+          <div className="fixed inset-y-0 right-0 max-w-2xl w-full bg-white shadow-2xl flex flex-col">
+            {/* Drawer Header */}
+            <div className="flex items-center justify-between px-6 py-4 border-b border-slate-200">
+              <div>
+                <h2 className="text-lg font-semibold text-slate-900">{selectedReq.group_id}</h2>
+                <p className="text-sm text-slate-600">{selectedReq.item_description}</p>
+              </div>
               <button
-                onClick={() => setOverrideModalOpen(false)}
-                className="text-slate-400 hover:text-slate-600 p-1"
+                onClick={() => setDrawerOpen(false)}
+                className="p-2 text-slate-400 hover:text-slate-600 rounded-lg hover:bg-slate-100 transition-colors"
               >
-                <X className="w-4 h-4" />
+                <X className="w-5 h-5" />
               </button>
             </div>
 
-            <form onSubmit={handleSubmitOverride} className="space-y-4 text-xs">
+            {/* Drawer Content */}
+            <div className="flex-1 overflow-y-auto px-6 py-6 space-y-6">
+              {/* Anti-splitting Section */}
               <div>
-                <label className="block text-slate-600 font-medium mb-1">
-                  System Policy Route
-                </label>
-                <div className="p-2.5 bg-slate-50 rounded-lg text-slate-800 font-medium border border-slate-200">
-                  {selectedReq.route} ({selectedReq.decision}) · {selectedReq.reason}
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">Anti-Splitting: Clubbed PR Lines</h3>
+                <div className="border border-slate-200 rounded-lg overflow-hidden">
+                  <table className="w-full text-xs">
+                    <thead>
+                      <tr className="bg-slate-50 border-b border-slate-200 text-slate-600 whitespace-nowrap">
+                        <th className="text-left py-2 px-3">PR / Line</th>
+                        <th className="text-right py-2 px-3">Quantity</th>
+                        <th className="text-left py-2 px-3">Created</th>
+                        <th className="text-left py-2 px-3">Need By</th>
+                        <th className="text-left py-2 px-3">Reason Clubbed</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {selectedReq.pr_lines.map((line, idx) => (
+                        <tr key={idx} className="text-slate-700">
+                          <td className="py-2 px-3 font-mono">{line.pr_no}/{line.pr_line}</td>
+                          <td className="py-2 px-3 text-right tabular-nums">{line.quantity} {line.uom}</td>
+                          <td className="py-2 px-3">{line.created_at}</td>
+                          <td className="py-2 px-3">{line.need_by_date}</td>
+                          <td className="py-2 px-3 text-slate-500">Same item, plant, window</td>
+                        </tr>
+                      ))}
+                    </tbody>
+                  </table>
                 </div>
               </div>
 
+              {/* Valuation Section */}
               <div>
-                <label className="block text-slate-600 font-medium mb-1">
-                  Override Route To:
-                </label>
-                <select
-                  value={overrideRoute}
-                  onChange={(e) => setOverrideRoute(e.target.value)}
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-                >
-                  <option value="CONTRACT_PO">CONTRACT_PO (Direct PO)</option>
-                  <option value="SPOT_PO">SPOT_PO (Preferred Supplier)</option>
-                  <option value="EMERGENCY_PO">EMERGENCY_PO</option>
-                  <option value="RFQ">RFQ (3 Quotes)</option>
-                  <option value="RFP">RFP (Formal 5 Quotes)</option>
-                  <option value="CAPEX_SOURCING">CAPEX_SOURCING</option>
-                </select>
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">Valuation</h3>
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 space-y-2 text-sm">
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Total Value:</span>
+                    <span className="font-semibold text-slate-900 tabular-nums">{formatINR(selectedReq.group_value_inr)}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Unit Price Source:</span>
+                    <span className="text-slate-700">{selectedReq.unit_price ? `${formatINR(selectedReq.unit_price)} (Contract/History)` : 'Estimated'}</span>
+                  </div>
+                  <div className="flex justify-between">
+                    <span className="text-slate-600">Total Quantity:</span>
+                    <span className="text-slate-700 tabular-nums">{selectedReq.total_quantity.toLocaleString()} {selectedReq.uom}</span>
+                  </div>
+                </div>
               </div>
 
+              {/* Routing Section */}
               <div>
-                <label className="block text-slate-600 font-medium mb-1">
-                  Override Supplier (optional):
-                </label>
-                <input
-                  type="text"
-                  value={overrideSupplier}
-                  onChange={(e) => setOverrideSupplier(e.target.value)}
-                  placeholder="e.g. S001"
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-                />
+                <h3 className="text-sm font-semibold text-slate-900 mb-3">Routing</h3>
+                <div className="bg-slate-50 border border-slate-200 rounded-lg p-4 text-sm space-y-2">
+                  <div className="flex items-center gap-2">
+                    <span className="font-mono px-2 py-0.5 rounded text-xs bg-slate-100 text-slate-700 border border-slate-200">
+                      {selectedReq.route}
+                    </span>
+                    <span className="text-slate-600">→</span>
+                    <span className="text-slate-700 font-medium">{selectedReq.decision}</span>
+                  </div>
+                  <p className="text-slate-600 italic">{selectedReq.reason}</p>
+                </div>
               </div>
 
-              <div>
-                <label className="block text-slate-800 font-semibold mb-1">
-                  Mandatory Explanation Comment <span className="text-red-500">*</span>:
-                </label>
-                <textarea
-                  rows={3}
-                  value={overrideReason}
-                  onChange={(e) => setOverrideReason(e.target.value)}
-                  placeholder="Explain why this decision is being overridden (Clause 8 requires written reasoning for audit trail)..."
-                  className="w-full p-2.5 bg-white border border-slate-200 rounded-lg focus:outline-none focus:ring-2 focus:ring-brand-500/30"
-                  required
-                />
-              </div>
+              {/* Override Form */}
+              {overrideMode && (
+                <div className="border border-slate-300 rounded-lg p-4 bg-slate-50">
+                  <h3 className="text-sm font-semibold text-slate-900 mb-3">Override Decision</h3>
+                  <textarea
+                    value={overrideReason}
+                    onChange={(e) => setOverrideReason(e.target.value)}
+                    rows={3}
+                    placeholder="Enter justification for override (required)..."
+                    className="w-full p-3 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
+                    required
+                  />
+                </div>
+              )}
+            </div>
 
-              <div className="flex items-center justify-end gap-2 pt-2">
-                <button
-                  type="button"
-                  onClick={() => setOverrideModalOpen(false)}
-                  className="px-4 py-2 bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium rounded-lg"
-                >
-                  Cancel
-                </button>
-                <button
-                  type="submit"
-                  disabled={submittingOverride || !overrideReason.trim()}
-                  className="px-4 py-2 bg-purple-600 hover:bg-purple-700 disabled:opacity-50 text-white font-semibold rounded-lg shadow-xs"
-                >
-                  {submittingOverride ? 'Saving...' : 'Confirm Override'}
-                </button>
-              </div>
-            </form>
+            {/* Drawer Footer */}
+            <div className="flex items-center justify-between px-6 py-4 border-t border-slate-200 bg-slate-50">
+              {!overrideMode ? (
+                <>
+                  {selectedReq.status === 'PENDING' && (
+                    <button
+                      onClick={() => handleApprove(selectedReq.group_id)}
+                      className="px-4 py-2 bg-slate-900 hover:bg-slate-800 text-white text-sm font-medium rounded-lg transition-colors"
+                    >
+                      Approve Decision
+                    </button>
+                  )}
+                  {selectedReq.status === 'APPROVED' && (
+                    <span className="text-sm text-slate-500">Decision already approved</span>
+                  )}
+                  <button
+                    onClick={() => setOverrideMode(true)}
+                    className="ml-auto px-4 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Override...
+                  </button>
+                </>
+              ) : (
+                <>
+                  <button
+                    onClick={() => setOverrideMode(false)}
+                    className="px-4 py-2 bg-white hover:bg-slate-50 border border-slate-300 text-slate-700 text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Cancel
+                  </button>
+                  <button
+                    onClick={handleOverrideSubmit}
+                    disabled={!overrideReason.trim()}
+                    className="px-4 py-2 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white text-sm font-medium rounded-lg transition-colors"
+                  >
+                    Confirm Override
+                  </button>
+                </>
+              )}
+            </div>
           </div>
         </div>
       )}
     </div>
   );
 };
+
 

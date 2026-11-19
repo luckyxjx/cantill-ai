@@ -105,36 +105,36 @@ export const PolicyManagerView: React.FC<PolicyManagerViewProps> = ({ onPolicyUp
   return (
     <div className="max-w-7xl mx-auto py-6 px-4 sm:px-6 lg:px-8 space-y-8">
       {/* Policy-as-Data Hero Card */}
-      <div className="bg-gradient-to-r from-slate-900 via-brand-950 to-slate-900 rounded-3xl shadow-xl text-white p-8 border border-slate-800">
+      <div className="bg-gradient-to-r from-slate-900 to-slate-800 rounded-lg shadow text-white p-8 border border-slate-700">
         <div className="flex flex-col md:flex-row items-start md:items-center justify-between gap-6">
           <div>
             <div className="flex items-center gap-2 mb-2">
-              <span className="px-3 py-1 rounded-full bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5">
-                <span className="w-2 h-2 rounded-full bg-emerald-400 animate-pulse"></span>
-                ACTIVE POLICY IN DATABASE
+              <span className="px-3 py-1 rounded bg-emerald-500/20 text-emerald-400 border border-emerald-500/30 text-xs font-semibold flex items-center gap-1.5">
+                <span className="w-2 h-2 rounded-full bg-emerald-400"></span>
+                ACTIVE POLICY
               </span>
               <span className="text-xs text-slate-400 font-mono">Doc: {activePolicy?.document_ref}</span>
             </div>
-            <h1 className="text-2xl font-bold tracking-tight text-white">
-              Corvo Procurement Policy <span className="text-brand-400">{activePolicy?.version}</span>
+            <h1 className="text-2xl font-bold text-white">
+              Corvo Procurement Policy <span className="text-slate-300">{activePolicy?.version}</span>
             </h1>
             <p className="text-sm text-slate-300 mt-1 max-w-2xl">
-              All limits, rule sequences, anti-splitting windows, and category conditions are dynamically evaluated from database schema without any hardcoded code logic.
+              Limits, sequences, and conditions are evaluated from database schema.
             </p>
           </div>
 
           <div className="grid grid-cols-2 sm:grid-cols-3 gap-4 text-xs">
-            <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <div className="bg-white/5 border border-white/10 rounded-lg p-3">
               <span className="text-slate-400 block">Spot PO Limit</span>
-              <span className="text-base font-bold text-white">₹{activePolicy?.parameters?.spot_po_limit?.toLocaleString() || '200,000'}</span>
+              <span className="text-base font-bold text-white tabular-nums">₹{activePolicy?.parameters?.spot_po_limit?.toLocaleString() || '200,000'}</span>
             </div>
-            <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <div className="bg-white/5 border border-white/10 rounded-lg p-3">
               <span className="text-slate-400 block">Emergency Limit</span>
-              <span className="text-base font-bold text-white">₹{activePolicy?.parameters?.emergency_po_limit?.toLocaleString() || '500,000'}</span>
+              <span className="text-base font-bold text-white tabular-nums">₹{activePolicy?.parameters?.emergency_po_limit?.toLocaleString() || '500,000'}</span>
             </div>
-            <div className="bg-white/5 border border-white/10 rounded-xl p-3">
+            <div className="bg-white/5 border border-white/10 rounded-lg p-3">
               <span className="text-slate-400 block">RFQ/RFP Limit</span>
-              <span className="text-base font-bold text-white">₹{activePolicy?.parameters?.rfq_limit?.toLocaleString() || '1,000,000'}</span>
+              <span className="text-base font-bold text-white tabular-nums">₹{activePolicy?.parameters?.rfq_limit?.toLocaleString() || '1,000,000'}</span>
             </div>
           </div>
         </div>
@@ -153,11 +153,11 @@ export const PolicyManagerView: React.FC<PolicyManagerViewProps> = ({ onPolicyUp
         <div className="bg-white rounded-2xl shadow-sm border border-slate-200 p-6 space-y-5">
           <div>
             <h2 className="text-base font-bold text-slate-900 flex items-center gap-2">
-              <Sparkles className="w-5 h-5 text-brand-600" />
-              Upload Policy Amendment (Run 2 Ready)
+              <Sparkles className="w-5 h-5 text-slate-700" />
+              Policy Amendment
             </h2>
             <p className="text-xs text-slate-500 mt-1">
-              Upload a signed policy amendment document (PDF/text) or type a change in natural language. The engine parses diffs and updates thresholds dynamically.
+              Upload a policy amendment document (PDF/text) or describe changes. The engine parses diffs and updates thresholds.
             </p>
           </div>
 
@@ -192,35 +192,17 @@ export const PolicyManagerView: React.FC<PolicyManagerViewProps> = ({ onPolicyUp
               rows={4}
               value={amendmentText}
               onChange={(e) => setAmendmentText(e.target.value)}
-              placeholder="e.g. Effective 2026-11-20: Spot PO limit increased to ₹3,00,000; For CHK1 plant, items under ₹50,000 go to direct spot PO..."
-              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-xl text-xs focus:outline-none focus:ring-2 focus:ring-brand-500/30"
+              placeholder="e.g. Effective 2026-11-20: Spot PO limit increased to ₹3,00,000; Emergency limit raised to ₹7,50,000..."
+              className="w-full p-3 bg-slate-50 border border-slate-200 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-slate-900"
             />
-          </div>
-
-          {/* Quick preset buttons */}
-          <div className="flex flex-wrap gap-2 text-xs">
-            <button
-              type="button"
-              onClick={() => setAmendmentText("Version 5.1, Effective 2026-11-20: Spot PO limit increased to ₹3,00,000; Emergency limit raised to ₹7,50,000.")}
-              className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
-            >
-              Preset: Spot PO to 3L
-            </button>
-            <button
-              type="button"
-              onClick={() => setAmendmentText("Version 5.1, Effective 2026-11-20: For CHK1 plant, items under ₹50,000 go to direct spot PO.")}
-              className="px-2.5 py-1 rounded bg-slate-100 hover:bg-slate-200 text-slate-700 font-medium"
-            >
-              Preset: CHK1 Specific Rule
-            </button>
           </div>
 
           <button
             onClick={handlePreview}
             disabled={previewing || (!amendmentText.trim() && !amendmentFile)}
-            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-xl text-xs font-semibold shadow-xs transition-all flex items-center justify-center gap-2"
+            className="w-full py-2.5 bg-slate-900 hover:bg-slate-800 disabled:opacity-50 text-white rounded-lg text-sm font-semibold transition-colors"
           >
-            {previewing ? 'Parsing Amendment...' : 'Preview Plain-Language Diffs'}
+            {previewing ? 'Parsing Amendment...' : 'Preview Rule Diffs'}
           </button>
 
           {/* Diff Preview Card */}
