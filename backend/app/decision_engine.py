@@ -44,7 +44,7 @@ class DecisionEngine:
         self.items_df = self._load_from_db_or_csv("item_master", ITEM_MASTER_CSV)
         self.suppliers_df = self._load_from_db_or_csv("supplier_master", SUPPLIER_MASTER_CSV)
         self.po_history_df = self._load_from_db_or_csv("po_history", PO_HISTORY_CSV)
-        self.po_history_df['po_dt'] = pd.to_datetime(self.po_history_df['po_date'], errors='coerce')
+        self.po_history_df['po_dt'] = pd.to_datetime(self.po_history_df['po_date'] if 'po_date' in self.po_history_df.columns else pd.Series([], dtype='object'), errors='coerce')
 
         self.active_suppliers = set(
             self.suppliers_df[self.suppliers_df['status'] == 'Active']['supplier_id']

@@ -39,7 +39,13 @@ app.add_middleware(
 # In-memory store for currently loaded requirements / batch decisions
 CURRENT_BATCH_RESULTS: List[PRDecisionOutput] = []
 CURRENT_REQUIREMENTS_MAP: Dict[str, Dict[str, Any]] = {}
-chat_assistant = ChatIntakeAssistant()
+_chat_assistant = None  # Lazy-initialized after DB is seeded in startup_event
+
+def get_chat_assistant() -> ChatIntakeAssistant:
+    global _chat_assistant
+    if _chat_assistant is None:
+        _chat_assistant = ChatIntakeAssistant()
+    return _chat_assistant
 
 @app.on_event("startup")
 def startup_event():
@@ -446,7 +452,7 @@ def chat_message(
     state: Optional[Dict[str, Any]] = Body(None, embed=True),
     requester: str = Body("A. Kumar", embed=True)
 ):
-    reply, new_state = chat_assistant.handle_message(message, state=state, requester=requester)
+    reply, new_state = get_chat_assistant().handle_message(message, state=state, requester=requester)
     return {"reply": reply, "state": new_state}
 
 # 7. Upload signed contract PDF
